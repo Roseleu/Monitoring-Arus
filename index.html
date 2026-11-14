@@ -19,6 +19,9 @@
   .val { font-size:2.4rem; font-weight:600; margin:4px 0 8px; }
   .unit { font-size:1rem; color:var(--mut); margin-left:4px; }
   canvas { max-height:180px; }
+  .btn { font-size:.75rem; padding:4px 10px; border-radius:6px; border:1px solid var(--mut); background:transparent; color:var(--fg); cursor:pointer; }
+  .btn.on { background:var(--ok); border-color:var(--ok); color:#fff; }
+  .btn:disabled { opacity:.6; cursor:not-allowed; }
   .foot { color:var(--mut); font-size:.75rem; margin-top:12px; }
 </style>
 </head>
@@ -32,7 +35,10 @@
     <canvas id="chArus"></canvas>
   </div>
   <div class="card">
-    <div class="label">Jarak (HC-SR04)</div>
+    <div class="label" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+      <span>Jarak (HC-SR04)</span>
+      <button id="btnUs" class="btn" disabled>menunggu ESP32</button>
+    </div>
     <div class="val"><span id="jarak">--</span><span class="unit">cm</span></div>
     <canvas id="chJarak"></canvas>
   </div>
@@ -41,7 +47,8 @@
 
 <script>
 // Harus sama persis dengan MQTT_TOPIC di sketch ESP32
-const TOPIC  = "roseleu-latihan-7x3k/sensor";
+const TOPIC     = "roseleu-latihan-7x3k/sensor";
+const TOPIC_CMD = "roseleu-latihan-7x3k/cmd";
 const BROKER = "wss://broker.hivemq.com:8884/mqtt";
 const MAX_POINTS = 60;
 const STALE_MS = 5000;
@@ -72,6 +79,25 @@ function push(chart, label, v) {
 
 const statusEl = document.getElementById("status");
 let lastMsg = 0;
+
+// Tombol ON/OFF sensor ultrasonic. Status yang ditampilkan = status yang DILAPORKAN ESP32,
+// bukan sekadar status yang diklik.
+const btnUs = document.getElementById("btnUs");
+let usOn = null;
+function setUsButton(on) {
+  usOn = on;
+  btnUs.disabled = false;
+  btnUs.classList.toggle("on", on);
+  btnUs.textContent = on ? "Sensor ON (klik: matikan)" : "Sensor OFF (klik: nyalakan)";
+}
+btnUs.addEventListener("click", () => {
+  if (usOn === null) return;
+  btnUs.disabled = true;
+  btnUs.textContent = "mengirim perintah...";
+  client.publish(TOPIC_CMD, usOn ? "0" : "1", { retain: true });
+  // Jika ESP32 tidak membalas dalam 4 detik, kembalikan tampilan ke status terakhir yang diketahui
+  setTimeout(() => { if (btnUs.disabled) setUsButton(usOn); }, 4000);
+});
 function setStatus(ok, text) { statusEl.textContent = text; statusEl.classList.toggle("ok", ok); }
 
 const client = mqtt.connect(BROKER, { reconnectPeriod: 3000 });
@@ -84,7 +110,10 @@ client.on("message", (_t, msg) => {
   lastMsg = Date.now();
   const t = new Date().toLocaleTimeString("id-ID");
   document.getElementById("arus").textContent  = (typeof d.arus === "number") ? d.arus.toFixed(2) : "--";
-  document.getElementById("jarak").textContent = (typeof d.jarak === "number") ? d.jarak.toFixed(1) : "di luar jangkauan";
+  if (typeof d.us === "boolean") setUsButton(d.us);
+  document.getElementById("jarak").textContent =
+    d.us === false ? "nonaktif" :
+    (typeof d.jarak === "number") ? d.jarak.toFixed(1) : "di luar jangkauan";
   push(chArus,  t, typeof d.arus  === "number" ? d.arus  : null);
   push(chJarak, t, typeof d.jarak === "number" ? d.jarak : null);
   document.getElementById("last").textContent = "Data terakhir: " + t;
