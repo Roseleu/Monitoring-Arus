@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dashboard ESP32</title>
+<script src="https://cdn.jsdelivr.net/npm/mqtt/dist/mqtt.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<style>
+  :root { --bg:#0f1419; --card:#1a2129; --fg:#e6edf3; --mut:#8b98a5; --ok:#3fb950; --bad:#f85149; --a:#58a6ff; --b:#d29922; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg); font-family:system-ui,sans-serif; }
+  h1 { font-size:1.2rem; margin:0 0 12px; display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  #status { font-size:.8rem; padding:2px 10px; border-radius:99px; background:var(--bad); color:#fff; }
+  #status.ok { background:var(--ok); }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; }
+  .card { background:var(--card); border-radius:10px; padding:14px; }
+  .label { color:var(--mut); font-size:.85rem; }
+  .val { font-size:2.4rem; font-weight:600; margin:4px 0 8px; }
+  .unit { font-size:1rem; color:var(--mut); margin-left:4px; }
+  canvas { max-height:180px; }
+  .foot { color:var(--mut); font-size:.75rem; margin-top:12px; }
+</style>
+</head>
+<body>
+<h1>Dashboard ESP32 <span id="status">terputus</span></h1>
+
+<div class="grid">
+  <div class="card">
+    <div class="label">Arus (ACS712)</div>
+    <div class="val"><span id="arus">--</span><span class="unit">A</span></div>
+    <canvas id="chArus"></canvas>
+  </div>
+  <div class="card">
+    <div class="label">Jarak (HC-SR04)</div>
+    <div class="val"><span id="jarak">--</span><span class="unit">cm</span></div>
+    <canvas id="chJarak"></canvas>
+  </div>
+</div>
+<div class="foot" id="last">Belum ada data</div>
+
+<script>
+// Harus sama persis dengan MQTT_TOPIC di sketch ESP32
+const TOPIC  = "roseleu-latihan-7x3k/sensor";
+const BROKER = "wss://broker.hivemq.com:8884/mqtt";
+const MAX_POINTS = 60;
+const STALE_MS = 5000;
+
+function makeChart(id, color) {
+  return new Chart(document.getElementById(id), {
+    type: "line",
+    data: { labels: [], datasets: [{ data: [], borderColor: color, borderWidth: 2, pointRadius: 0, tension: .25, spanGaps: false }] },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: "#8b98a5", maxTicksLimit: 6 }, grid: { color: "#26303a" } },
+        y: { ticks: { color: "#8b98a5" }, grid: { color: "#26303a" } }
+      }
+    }
+  });
+}
+const chArus  = makeChart("chArus",  "#58a6ff");
+const chJarak = makeChart("chJarak", "#d29922");
+
+function push(chart, label, v) {
+  chart.data.labels.push(label);
+  chart.data.datasets[0].data.push(v);
+  if (chart.data.labels.length > MAX_POINTS) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }
+  chart.update();
+}
+
+const statusEl = document.getElementById("status");
+let lastMsg = 0;
+function setStatus(ok, text) { statusEl.textContent = text; statusEl.classList.toggle("ok", ok); }
+
+const client = mqtt.connect(BROKER, { reconnectPeriod: 3000 });
+client.on("connect", () => { setStatus(false, "broker OK, menunggu ESP32"); client.subscribe(TOPIC); });
+client.on("close",   () => setStatus(false, "terputus"));
+
+client.on("message", (_t, msg) => {
+  let d;
+  try { d = JSON.parse(msg.toString()); } catch { return; }
+  lastMsg = Date.now();
+  const t = new Date().toLocaleTimeString("id-ID");
+  document.getElementById("arus").textContent  = (typeof d.arus === "number") ? d.arus.toFixed(2) : "--";
+  document.getElementById("jarak").textContent = (typeof d.jarak === "number") ? d.jarak.toFixed(1) : "di luar jangkauan";
+  push(chArus,  t, typeof d.arus  === "number" ? d.arus  : null);
+  push(chJarak, t, typeof d.jarak === "number" ? d.jarak : null);
+  document.getElementById("last").textContent = "Data terakhir: " + t;
+  setStatus(true, "ESP32 online");
+});
+
+// Tandai offline jika tidak ada data > 5 detik
+setInterval(() => {
+  if (lastMsg && Date.now() - lastMsg > STALE_MS && client.connected) setStatus(false, "ESP32 tidak mengirim data");
+}, 1000);
+</script>
+</body>
+</html>
